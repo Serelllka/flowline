@@ -1,0 +1,13 @@
+.flowline/
+.idea/
+.omx/
+bin/
+.DS_Store
+*.test
+.env
+.env.*
+!.env.example
+/settings.json
+*.db
+*.db-wal
+*.db-shm
