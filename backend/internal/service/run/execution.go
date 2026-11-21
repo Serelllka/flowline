@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"strconv"
 	"time"
 
+	"flowline/internal/cli/command"
 	"flowline/internal/cli/process"
 	"flowline/internal/model"
 	"flowline/internal/repository/git"
@@ -112,16 +112,9 @@ func (e *Engine) executeNode(ctx context.Context, active *activeRun, node model.
 	var outputs map[string]string
 	var code int
 	if node.ExecutionType() == "cmd" {
-		stdout, stderr, exitCode, commandErr := process.RunProcessStreams(blockCtx,
-			[]string{"/bin/bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", node.Command},
-			state.Worktree, inputJSON+"\n", onOutput)
-		code, err = exitCode, commandErr
-		state.Stdout, state.Stderr = process.Redact(stdout), process.Redact(stderr)
-		streams := map[string]string{"stdout": stdout, "stderr": stderr, "exitCode": strconv.Itoa(code)}
-		outputs = make(map[string]string, len(node.Outputs))
-		for _, output := range node.Outputs {
-			outputs[output.Name] = streams[output.StreamSource()]
-		}
+		result, commandErr := command.Execute(blockCtx, node, state.Worktree, inputJSON, onOutput)
+		outputs, code, err = result.Outputs, result.ExitCode, commandErr
+		state.Stdout, state.Stderr = process.Redact(result.Stdout), process.Redact(result.Stderr)
 	} else {
 		outputs, code, err = active.executors[node.Executor].Execute(blockCtx, node, state.Worktree, prompt, onOutput)
 	}

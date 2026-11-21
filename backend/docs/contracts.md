@@ -1,6 +1,6 @@
 # Flowline implementation contracts
 
-Module: flowline, Go 1.27. Shared domain contracts: backend/internal/model. Implementations are split into config/app, api/http, service/run, service/graph, repository/{sqlite,git,settings,executorconfig}, client/{github,chatcompletion}, cli/{codex,claude,process}. The service entry point is cmd/service; executorconfig only reads the legacy format.
+Module: flowline, Go 1.27. Shared domain contracts: backend/internal/model. Implementations are split into config/app, api/http, service/run, service/graph, repository/{sqlite,git,settings,executorconfig}, client/{github,chatcompletion}, cli/{codex,claude,command,process}. The service entry point is cmd/service; executorconfig only reads the legacy format.
 Frontend: buildless HTML/CSS/JS in frontend, served same-origin by backend.
 
 JSON uses camelCase. IDs UUID/random hex, output names identifiers.

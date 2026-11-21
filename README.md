@@ -272,6 +272,7 @@ backend/
     client/chatcompletion/     совместимый API и файловые инструменты
     cli/codex/                 Codex CLI
     cli/claude/                Claude Code
+    cli/command/               Bash-скрипты CMD и именованные потоки
     cli/process/               процессы, guardian, редактирование секретов
     model/                     общие контракты без IO
     testutil/                  общие тестовые фикстуры
