@@ -21,7 +21,7 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, run)
+	writeJSON(w, http.StatusCreated, newRunResponse(run))
 }
 
 func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +31,7 @@ func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, 200, runs)
+	writeJSON(w, 200, runResponses(runs))
 }
 
 func (s *Server) run(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +41,7 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, 200, run)
+	writeJSON(w, 200, newRunResponse(run))
 }
 
 func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
@@ -51,5 +51,5 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, 200, run)
+	writeJSON(w, 200, newRunResponse(run))
 }

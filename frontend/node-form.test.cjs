@@ -46,3 +46,15 @@ test('legacy form rendering preserves absence of JSON field; history escapes cod
   assert.match(history,/7/);
   assert.doesNotMatch(history,/<input|<textarea|<select|<script>/);
 });
+
+test('actual JSON history preserves numeric tokens across browser JSON parsing', () => {
+  const run = app();
+  const raw = '{"data":{"large":9007199254740993,"exponent":1e400,"html":"<img>"}}';
+  const response = `{"inputJson":${raw},"inputJsonText":${JSON.stringify(raw)}}`;
+  run(`result = JSON.parse(${JSON.stringify(response)})`);
+  const history = run("renderResult({id:'cmd',type:'cmd',outputs:[]},result)");
+  assert.match(history,/9007199254740993/);
+  assert.match(history,/1e400/);
+  assert.match(history,/&lt;img&gt;/);
+  assert.doesNotMatch(history,/9007199254740992|<img>/);
+});

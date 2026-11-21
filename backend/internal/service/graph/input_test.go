@@ -146,3 +146,36 @@ func TestJSONAmbiguityAndRenameCollision(t *testing.T) {
 		t.Fatal("failed rename mutated pipeline")
 	}
 }
+
+func TestJSONRenameIgnoresUnrelatedIncompleteDrafts(t *testing.T) {
+	p := testutil.Pipeline()
+	p.Nodes[0].InputJSON = jsonText(`{"unfinished":`)
+	p.Nodes[1].InputJSON = jsonText(`{"value":"{{changes}}"}`)
+	p.Nodes = append(p.Nodes, model.Node{ID: "unrelated", InputJSON: jsonText("{")})
+
+	if err := RenameOutput(&p, "dev", "changes-id", "text"); err != nil {
+		t.Fatal(err)
+	}
+
+	if p.Nodes[0].Outputs[0].Name != "text" || p.Nodes[1].Prompt != "Review {{ text }}" || !strings.Contains(*p.Nodes[1].InputJSON, "{{text}}") {
+		t.Fatal("consumer references were not renamed")
+	}
+	if *p.Nodes[0].InputJSON != `{"unfinished":` || *p.Nodes[2].InputJSON != "{" {
+		t.Fatal("unrelated incomplete drafts changed")
+	}
+}
+
+func TestJSONRenameRejectsIncompleteConsumerAtomically(t *testing.T) {
+	p := testutil.Pipeline()
+	p.Nodes[1].InputJSON = jsonText(`{"value":"{{changes}}"`)
+	before, _ := json.Marshal(p)
+
+	if err := RenameOutput(&p, "dev", "changes-id", "text"); err == nil {
+		t.Fatal("rename accepted an unparseable consumer")
+	}
+
+	after, _ := json.Marshal(p)
+	if string(after) != string(before) {
+		t.Fatal("failed rename mutated the pipeline")
+	}
+}

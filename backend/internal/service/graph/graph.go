@@ -336,7 +336,20 @@ func RenameOutput(p *model.Pipeline, nodeID, outputID, newName string) error {
 	}
 
 	target := model.Source{NodeID: nodeID, OutputID: outputID}
+	consumers := map[string]bool{}
+	for _, edge := range p.Edges {
+		if edge.From == nodeID {
+			consumers[edge.To] = true
+		}
+	}
+
 	for i, n := range p.Nodes {
+		// Only direct consumers can refer to this output or gain a collision.
+		// Unrelated nodes may contain incomplete JSON while editing a draft.
+		if !consumers[n.ID] {
+			continue
+		}
+
 		before, ambiguousBefore, _ := inputReferences(*p, n)
 		after, ambiguousAfter, _ := inputReferences(candidate, candidate.Nodes[i])
 		var renameErr error

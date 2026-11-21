@@ -27,6 +27,7 @@ ResolveInputs(Pipeline, Node, GitContext, map[string]*NodeRun) (map[string]strin
 RenderPrompt(prompt string, inputs map[string]string) (string,error).
 ResolveInputJSON(Pipeline, Node, GitContext, map[string]*NodeRun, map[string]string) (json.RawMessage,error).
 RenameOutput(*Pipeline,nodeID,outputID,newName string) error. Bindings use stable output IDs; rewrite shorthand/qualified AI prompt and JSON string-value tokens only when reference resolves to renamed output. Preserve aliases, JSON keys, CMD source identity and literal scripts; qualify collisions atomically.
+Only direct consumers need reference rewrites. Incomplete JSON in unrelated draft nodes does not block a rename; invalid JSON in an affected consumer still rejects it atomically.
 Builtin tokens: context,repository,branch,commit,pull_request. Direct predecessors only. Qualified token: nodeID.outputName. Implicit shorthand is ambiguous if two direct predecessors expose same name, unless explicit Node.Inputs alias resolves it. Validate missing sources, outputs, direct edges, duplicate IDs/edges, cycles, invalid names, reserved aliases, malformed tokens. ValidateGraph requires a nonempty Executor and Prompt only for AI; actual profile availability belongs to engine. CMD requires a nonempty Command and valid stream sources. Unknown types fail in draft and execution validation.
 ResolveInputs provides builtins, unambiguous predecessor outputs, qualified output names, explicit aliases. Outputs map keyed by output NAME; bindings by output ID mapped via snapshot.
 
@@ -103,3 +104,10 @@ resolved input and script remain available. RunProcessStreams returns bounded ra
 stdout/stderr separately; RunProcess retains the existing stdout/code/error API.
 Callbacks redact complete lines, and execution redacts streams and JSON structurally
 before persistence. Stored source configuration remains the immutable user snapshot.
+
+HTTP run responses (including bootstrap, list, start and cancel) also expose
+`nodes[id].inputJsonText` when resolved input exists. This is the exact stored,
+already-redacted JSON as a string so history can display numbers beyond JavaScript
+precision without rounding or converting them to null. The existing `inputJson`
+object stays unchanged for API consumers; `inputJsonText` is derived at the HTTP
+boundary and is not duplicated in storage.
