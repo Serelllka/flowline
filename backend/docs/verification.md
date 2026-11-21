@@ -73,3 +73,32 @@ Claude-флаги и API-протокол сверены с официальны
 - [DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/)
 - [GitHub PR list](https://cli.github.com/manual/gh_pr_list)
 - [GitHub PR view](https://cli.github.com/manual/gh_pr_view)
+
+## AI/CMD — проверка этой реализации
+
+- Фокусные Go-тесты `service/graph`, `service/run`, `cli/process` и
+  `repository/sqlite` — PASS. Проверены JSON-объекты и ссылки, структурная подстановка
+  кавычек/переводов строк, сохранение чисел, атомарное переименование с коллизиями,
+  стабильные ID и источники потоков, буквальные CMD-скрипты и совместимость всех
+  старых типов без JSON-входа.
+- `GOCACHE=/tmp/flowline-feature-gocache make test` — PASS: все Go-пакеты с `-race`,
+  все 15 frontend-тестов. CMD выполняется без AI-профилей; проверены stdout/stderr,
+  пустые потоки, ненулевой код, errexit/pipefail, отмена с завершением потомков,
+  JSON stdin с shell-подобными строками без исполнения, CMD → AI → CMD через
+  тестовый исполнитель, fork/join с файлами предшественников, редактирование
+  секретов, неизменяемые снимки и сохранение/повторное открытие SQLite.
+- HTTP-handler сценарий сохраняет новый CMD-пайплайн, читает поля через bootstrap,
+  выполняет реальный Bash без профилей, сохраняет результат и отклоняет запуск
+  некорректного JSON. Тесты UI проверяют две записи палитры, отдельные AI/CMD поля,
+  JSON-ошибки, источники выходов и экранирование read-only истории.
+- `GOCACHE=/tmp/flowline-feature-gocache make check` — PASS (`go vet`, JS syntax).
+- `go build -o /tmp/flowline-ai-cmd ./cmd/service` с тем же временным GOCACHE — PASS.
+  Сборочных артефактов в рабочем дереве нет; зависимости и миграции не добавлены.
+- `git diff --check` — PASS; изменения относятся к модели, графу, выполнению,
+  интерфейсу, документации и тестам AI/CMD.
+
+Ограничение этой проверки: запуск временного сервера с `--data` в `/tmp` дошёл до
+`listen tcp 127.0.0.1:4187: bind: operation not permitted`; CUA сообщил
+`The browser access host is unavailable`. Поэтому визуальный браузерный прогон
+не подтверждён. Модели реальных аккаунтов не вызывались: передача AI/CMD проверена
+только тестовой фикстурой, которой нет в production registry.

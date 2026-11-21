@@ -6,12 +6,16 @@ const clone = value => JSON.parse(JSON.stringify(value));
 const uid = prefix => `${prefix}_${crypto.randomUUID().replaceAll('-', '')}`;
 const activeStatus = status => ['waiting', 'running'].includes(status);
 const statusNames = {waiting:'Ожидание',running:'Выполняется',success:'Успешно',error:'Ошибка',cancelled:'Отменён',skipped:'Пропущен',interrupted:'Прерван'};
-const types = {
+const stageTemplates = {
   develop:{name:'Разработка',icon:'code',color:'#b78b5d',bg:'#fcf5ec',border:'#f0e3d0',summary:'Реализация задачи и подготовка изменений',output:'changes',prompt:'Изучи {{context}}. Реализуй задачу, следуя правилам проекта. Верни описание решения и изменённых файлов.'},
   review:{name:'Ревью',icon:'review',color:'#9580b6',bg:'#f6f1fb',border:'#e8def2',summary:'Проверка кода, архитектуры и качества',output:'review',prompt:'Проверь код и {{context}}. Оцени корректность и архитектуру. Верни замечания с приоритетами и итоговый вердикт.'},
   test:{name:'Тестирование',icon:'test',color:'#7399b4',bg:'#eef6fa',border:'#d9e9f1',summary:'Проверка сценариев и запуск тестов',output:'tests',prompt:'Изучи {{context}}. Запусти подходящие тесты. Верни команды, результаты и обнаруженные проблемы.'},
   publish:{name:'Публикация',icon:'publish',color:'#6d9b7c',bg:'#f0f7f2',border:'#dfece2',summary:'Локальное описание PR и релизные заметки',output:'release',prompt:'На основе {{context}} подготовь локальный пакет: описание PR, релизные заметки и отчёт о фактически выполненных проверках. Верни материалы текстом. Не выполняй push, создание или изменение PR, merge, выпуск релиза или другие удалённые изменения.'},
   prompt:{name:'Свой промпт',icon:'spark',color:'#7a8f87',bg:'#f2f6f4',border:'#e0e8e3',summary:'Свой этап с инструкциями для исполнителя',output:'result',prompt:'Изучи {{context}} и опиши задачу этого этапа.'}
+};
+const types = {
+  ai:{name:'AI',icon:'spark',color:'#9580b6',bg:'#f6f1fb',border:'#e8def2',summary:'Модель выполняет инструкции с JSON-входом',prompt:'Выполни задачу, используя JSON-вход. Верни результат.'},
+  cmd:{name:'CMD',icon:'terminal',color:'#7399b4',bg:'#eef6fa',border:'#d9e9f1',summary:'Bash-скрипт получает JSON через stdin'}
 };
 let repositories = [], pipelines = [], runs = [], executors = [];
 let publication = {enabled:false,detail:'Действия этапа «Публикация» ещё не настроены.'};
@@ -27,7 +31,7 @@ const graph = () => snapshotRun?.snapshot || draft();
 const nodeById = id => graph()?.nodes.find(node => node.id === id);
 const readonly = () => !!snapshotRun;
 const editable = () => ready && !readonly() && !busy;
-const typeOf = node => types[node.type] || types.prompt;
+const typeOf = node => types[FlowlineGraph.executionType(node)] || {...types.ai,name:'Неизвестный тип',summary:`Неизвестный тип: ${node.type}`};
 const nodeStyle = type => `--node-color:${type.color};--node-bg:${type.bg};--node-border:${type.border}`;
 const statusIcon = status => status === 'success' ? 'check' : ['cancelled','error','interrupted','skipped'].includes(status) ? 'stop' : 'clock';
 const statusClass = status => Object.hasOwn(statusNames,status) ? status : 'waiting';
@@ -82,8 +86,10 @@ function makePipeline(name = 'Новый пайплайн') {
   return {id:uid('pipeline'),name,description:'',nodes:[],edges:[],viewport:{x:0,y:0,zoom:1}};
 }
 function makeNode(type, x, y) {
-  const item = types[type];
-  return {id:uid('node'),type,name:item.name,executor:executors.find(executor => executor.available)?.id || executors[0]?.id || '',prompt:item.prompt,x,y,inputs:{},outputs:[{id:uid('output'),name:item.output}]};
+  const item = stageTemplates[type] || types[type], execution = type === 'cmd' ? 'cmd' : 'ai';
+  const outputs = FlowlineGraph.defaultOutputs(execution, () => uid('output'));
+  if (item.output) outputs[0].name = item.output;
+  return {id:uid('node'),type:execution,name:item.name,executor:execution === 'cmd' ? '' : executors.find(executor => executor.available)?.id || executors[0]?.id || '',prompt:item.prompt || '',command:execution === 'cmd' ? 'input=$(cat)\nprintf \'%s\\n\' "$input"' : '',inputJson:'{}',x,y,inputs:{},outputs};
 }
 function renderSidebar() {
   $('#pipeline-count').textContent = pipelines.length;
@@ -195,7 +201,7 @@ function renderNodes() {
     const type = typeOf(node), result = snapshotRun?.nodes?.[node.id], status = result?.status;
     const incoming = pipeline.edges.filter(edge => edge.to === node.id);
     const executor = FlowlineExecutors.profile(node.executor, executors, snapshotRun);
-    return `<article class="node ${selected === node.id ? 'selected' : ''} ${status ? statusClass(status) : ''}" data-node="${escapeHTML(node.id)}" style="left:${Number(node.x) || 0}px;top:${Number(node.y) || 0}px;${nodeStyle(type)}" aria-label="Блок ${escapeHTML(node.name)}" tabindex="0"><span class="node-status ${status ? statusClass(status) : ''}">${status ? `${icon(statusIcon(status))}${escapeHTML(statusNames[status] || status)}` : incoming.length ? '' : 'Вход в пайплайн'}</span><button class="port port-in" data-port="in" data-node-id="${escapeHTML(node.id)}" aria-label="Вход блока ${escapeHTML(node.name)}" ${readonly() ? 'disabled' : ''}></button><div class="node-header"><span class="node-icon">${icon(type.icon)}</span><div class="node-heading"><h3>${escapeHTML(node.name)}</h3><span class="node-kind">${readonly() ? 'Результат этапа' : 'Исполнитель промпта'}</span></div><button class="node-menu" aria-label="Настройки блока ${escapeHTML(node.name)}">···</button></div><p class="node-summary">${escapeHTML(type.summary)}</p><div class="node-divider"></div><div class="node-meta"><span class="model">${icon('terminal')}${escapeHTML(executor?.name || node.executor || 'Не настроен')}</span><span>Промпт</span></div><div class="node-footer"><span>${icon('file')}${incoming.length ? `${incoming.length} входов` : 'Контекст Git'}</span><span title="${escapeHTML((node.outputs || []).map(output => output.name).join(', '))}">${icon('box')}${escapeHTML(node.outputs?.[0]?.name || 'Нет выхода')}${node.outputs?.length > 1 ? ` +${node.outputs.length - 1}` : ''}</span></div><button class="port port-out ${pendingConnection === node.id ? 'pending' : ''}" data-port="out" data-node-id="${escapeHTML(node.id)}" aria-label="Выход блока ${escapeHTML(node.name)}" ${readonly() ? 'disabled' : ''}></button></article>`;
+    return `<article class="node ${selected === node.id ? 'selected' : ''} ${status ? statusClass(status) : ''}" data-node="${escapeHTML(node.id)}" style="left:${Number(node.x) || 0}px;top:${Number(node.y) || 0}px;${nodeStyle(type)}" aria-label="Блок ${escapeHTML(node.name)}" tabindex="0"><span class="node-status ${status ? statusClass(status) : ''}">${status ? `${icon(statusIcon(status))}${escapeHTML(statusNames[status] || status)}` : incoming.length ? '' : 'Вход в пайплайн'}</span><button class="port port-in" data-port="in" data-node-id="${escapeHTML(node.id)}" aria-label="Вход блока ${escapeHTML(node.name)}" ${readonly() ? 'disabled' : ''}></button><div class="node-header"><span class="node-icon">${icon(type.icon)}</span><div class="node-heading"><h3>${escapeHTML(node.name)}</h3><span class="node-kind">${escapeHTML(type.name)}</span></div><button class="node-menu" aria-label="Настройки блока ${escapeHTML(node.name)}">···</button></div><p class="node-summary">${escapeHTML(type.summary)}</p><div class="node-divider"></div><div class="node-meta"><span class="model">${icon('terminal')}${escapeHTML(node.type === 'cmd' ? '/bin/bash' : executor?.name || node.executor || 'Не настроен')}</span><span>${node.type === 'cmd' ? 'Скрипт' : 'Промпт'}</span></div><div class="node-footer"><span>${icon('file')}${incoming.length ? `${incoming.length} входов` : 'Контекст Git'}</span><span title="${escapeHTML((node.outputs || []).map(output => output.name).join(', '))}">${icon('box')}${escapeHTML(node.outputs?.[0]?.name || 'Нет выхода')}${node.outputs?.length > 1 ? ` +${node.outputs.length - 1}` : ''}</span></div><button class="port port-out ${pendingConnection === node.id ? 'pending' : ''}" data-port="out" data-node-id="${escapeHTML(node.id)}" aria-label="Выход блока ${escapeHTML(node.name)}" ${readonly() ? 'disabled' : ''}></button></article>`;
   }).join('');
   $('#canvas-empty').hidden = !!pipeline.nodes.length;
   renderEdges(); renderMinimap();
@@ -284,12 +290,26 @@ function renderInspector() {
   $('#close-inspector').onclick = closeInspector;
   if (readonly()) return;
   $('#node-name').oninput = event => { node.name = event.target.value; markDirty(); renderNodes(); $('.panel-header h2',panel).textContent = node.name; };
-  $('#node-prompt').oninput = event => { node.prompt = event.target.value; markDirty(); };
-  $('#node-executor').onchange = event => { node.executor = event.target.value; markDirty(); renderNodes(); };
+  if ($('#node-prompt')) $('#node-prompt').oninput = event => { node.prompt = event.target.value; markDirty(); };
+  if ($('#node-executor')) $('#node-executor').onchange = event => { node.executor = event.target.value; markDirty(); renderNodes(); };
+  if ($('#node-command')) $('#node-command').oninput = event => { node.command = event.target.value; markDirty(); };
+  $('#node-input-json').oninput = () => {
+    node.inputJson = $('#node-input-json').value;
+    const error = FlowlineGraph.jsonInputError(node.inputJson);
+    $('#json-error').textContent = error;
+    $('#json-error').hidden = !error;
+    $('#node-input-json').setAttribute('aria-invalid', String(!!error));
+    markDirty();
+  };
+  $$('[data-output-source]',panel).forEach(field => field.onchange = () => {
+    node.outputs.find(output => output.id === field.dataset.outputSource).source = field.value;
+    markDirty();
+  });
   $$('[data-token]',panel).forEach(button => button.onclick = () => {
-    const field = $('#node-prompt');
-    field.setRangeText(`{{${button.dataset.token}}}`,field.selectionStart,field.selectionEnd,'end');
-    node.prompt = field.value; markDirty(); field.focus();
+    const field = document.getElementById(button.dataset.target);
+    const reference = field.id === 'node-input-json' ? FlowlineGraph.jsonReference(field.value, field.selectionStart, button.dataset.token) : `{{${button.dataset.token}}}`;
+    field.setRangeText(reference,field.selectionStart,field.selectionEnd,'end');
+    field.dispatchEvent(new Event('input')); field.focus();
   });
   $$('[data-output-name]',panel).forEach(field => field.onchange = action(async () => {
     if (!editable()) return;
@@ -312,7 +332,7 @@ function renderInspector() {
     if (!editable()) return;
     let name = 'result', index = 2;
     while (node.outputs.some(output => output.name === name)) name = `result_${index++}`;
-    node.outputs.push({id:uid('output'),name}); markDirty(); renderNodes(); renderInspector();
+    node.outputs.push({id:uid('output'),name,...(node.type === 'cmd' ? {source:'stdout'} : {})}); markDirty(); renderNodes(); renderInspector();
   };
   $('#add-input').onclick = () => {
     const alias = $('#input-alias').value.trim(), value = $('#input-source').value;
@@ -327,17 +347,30 @@ function renderInspector() {
   $('#delete-node').onclick = () => deleteNode(node.id);
   if (busy) $$('input,textarea,select,button:not(#close-inspector)',panel).forEach(element => element.disabled = true);
 }
+function tokenButtons(tokens,target) {
+  return `<div class="token-list">${tokens.map(token => `<button class="context-token" data-target="${target}" data-token="${escapeHTML(token)}">${icon('box')}${escapeHTML(token)}</button>`).join('')}</div>`;
+}
 function renderNodeForm(node) {
   const sources = FlowlineGraph.availableSources(graph(),node), tokens = FlowlineGraph.availableTokens(graph(),node);
+  const isCMD = node.type === 'cmd';
   const executorOptions = executors.map(executor => `<option value="${escapeHTML(executor.id)}" ${node.executor === executor.id ? 'selected' : ''}>${escapeHTML(executor.name)}${executor.available ? '' : ' · недоступен'}</option>`).join('');
   const unknownExecutor = node.executor && !executors.some(executor => executor.id === node.executor);
-  return `<div class="field"><label class="field-label" for="node-name">Название</label><input class="input" id="node-name" maxlength="120" value="${escapeHTML(node.name)}"><p class="field-help node-id">ID: ${escapeHTML(node.id)}</p></div><div class="field"><label class="field-label" for="node-executor">Исполнитель</label><select id="node-executor" class="select-input"><option value="" ${!node.executor ? 'selected' : ''}>Выберите исполнителя</option>${unknownExecutor ? `<option selected value="${escapeHTML(node.executor)}">${escapeHTML(node.executor)} · недоступен</option>` : ''}${executorOptions}</select><p class="field-help">${escapeHTML(unknownExecutor ? 'Этот профиль удалён или недоступен. Выберите существующего исполнителя; исходный ID сохранён.' : executors.find(executor => executor.id === node.executor)?.detail || 'Добавьте профиль через «Исполнители» в верхней панели.')}</p></div><div class="field"><label class="field-label" for="node-prompt">Промпт</label><textarea class="input prompt-input" id="node-prompt" spellcheck="false">${escapeHTML(node.prompt)}</textarea><p class="field-help">Вставьте вход нажатием. Доступны результаты связанных предшественников.</p><div class="token-list">${tokens.map(token => `<button class="context-token" data-token="${escapeHTML(token)}">${icon('box')}${escapeHTML(token)}</button>`).join('')}</div></div><div class="field"><div class="field-label">Именованные входы</div>${Object.entries(node.inputs || {}).map(([alias,source]) => {
-    const available = sources.find(item => item.nodeId === source.nodeId && item.outputId === source.outputId);
-    return `<div class="input-binding"><span><strong>${escapeHTML(alias)}</strong><small>${available ? `${escapeHTML(available.nodeName)} / ${escapeHTML(available.name)}` : 'Источник недоступен — проверьте связи'}</small></span><button class="icon-button" data-remove-input="${escapeHTML(alias)}" aria-label="Удалить вход ${escapeHTML(alias)}">${icon('close')}</button></div>`;
-  }).join('')}<div class="binding-editor"><input class="input" id="input-alias" placeholder="Имя входа, например changes" aria-label="Имя входа"><select class="select-input" id="input-source" aria-label="Источник входа"><option value="">Выберите результат</option>${sources.map(source => `<option value="${escapeHTML(JSON.stringify([source.nodeId,source.outputId]))}">${escapeHTML(source.nodeName)} / ${escapeHTML(source.name)}</option>`).join('')}</select><button class="button secondary" id="add-input" ${sources.length ? '' : 'disabled'}>${icon('plus')}Добавить вход</button></div><p class="field-help">Именованный вход снимает неоднозначность одинаковых имён. Он связан со стабильным ID результата.</p></div><div class="field"><div class="field-label">Выходы</div>${(node.outputs || []).map(output => `<div class="output-row"><input class="input" data-output-name="${escapeHTML(output.id)}" aria-label="Имя результата" value="${escapeHTML(output.name)}" maxlength="80"><button class="icon-button" data-remove-output="${escapeHTML(output.id)}" aria-label="Удалить результат ${escapeHTML(output.name)}">${icon('close')}</button></div>`).join('')}<button class="button secondary" id="add-output">${icon('plus')}Добавить выход</button><p class="field-help">Переименование обновляет связанные ссылки. Для нескольких выходов исполнитель возвращает JSON-объект с этими именами.</p></div>${node.type === 'publish' ? `<p class="${publication.enabled ? 'field-help' : 'form-error'}">${escapeHTML(publication.detail)}</p>` : ''}`;
+  const jsonError = FlowlineGraph.jsonInputError(node.inputJson ?? '{}');
+  const settings = isCMD
+    ? `<div class="field"><label class="field-label" for="node-command">Скрипт CMD · Bash</label><textarea class="input prompt-input code-input" id="node-command" spellcheck="false">${escapeHTML(node.command || '')}</textarea><p class="field-help">Bash с errexit и pipefail. JSON поступает в stdin. Скрипт выполняется буквально: ссылки {{…}} здесь не подставляются.</p><pre class="stdin-example">input=$(cat)
+printf '%s\\n' "$input"</pre></div>`
+    : `<div class="field"><label class="field-label" for="node-executor">Исполнитель AI</label><select id="node-executor" class="select-input"><option value="" ${!node.executor ? 'selected' : ''}>Выберите исполнителя</option>${unknownExecutor ? `<option selected value="${escapeHTML(node.executor)}">${escapeHTML(node.executor)} · недоступен</option>` : ''}${executorOptions}</select><p class="field-help">${escapeHTML(unknownExecutor ? 'Этот профиль удалён или недоступен. Выберите существующего исполнителя; исходный ID сохранён.' : executors.find(executor => executor.id === node.executor)?.detail || 'Добавьте профиль через «Исполнители» в верхней панели.')}</p></div><div class="field"><label class="field-label" for="node-prompt">Промпт</label><textarea class="input prompt-input" id="node-prompt" spellcheck="false">${escapeHTML(node.prompt)}</textarea><p class="field-help">Инструкции для модели. JSON-вход передаётся вместе с ними.</p>${tokenButtons(tokens,'node-prompt')}</div>`;
+  return `<div class="field"><label class="field-label" for="node-name">Название</label><input class="input" id="node-name" maxlength="120" value="${escapeHTML(node.name)}"><p class="field-help node-id">${isCMD ? 'CMD' : 'AI'} · ID: ${escapeHTML(node.id)}</p></div>${settings}
+    <div class="field"><label class="field-label" for="node-input-json">Входные данные · JSON</label><textarea class="input json-input code-input" id="node-input-json" spellcheck="false" aria-describedby="json-error" aria-invalid="${!!jsonError}">${escapeHTML(node.inputJson ?? '{}')}</textarea><p id="json-error" class="form-error" ${jsonError ? '' : 'hidden'}>${escapeHTML(jsonError)}</p><p class="field-help">JSON-объект в поле data. Оболочка также содержит context (Git), predecessors (результаты по ID блока) и inputs (доступные ссылки). Ссылки подставляются только в строковые значения: {"text":"{{branch}}"}.</p>${node.inputJson == null && !['ai','cmd'].includes(node.type) ? '<p class="field-help">Старый блок сохраняет исполнение только промпта. Редактирование JSON включит новый формат входа.</p>' : ''}${tokenButtons(tokens,'node-input-json')}</div>
+    <div class="field"><div class="field-label">Именованные входы</div>${Object.entries(node.inputs || {}).map(([alias,source]) => {
+      const available = sources.find(item => item.nodeId === source.nodeId && item.outputId === source.outputId);
+      return `<div class="input-binding"><span><strong>${escapeHTML(alias)}</strong><small>${available ? `${escapeHTML(available.nodeName)} / ${escapeHTML(available.name)}` : 'Источник недоступен — проверьте связи'}</small></span><button class="icon-button" data-remove-input="${escapeHTML(alias)}" aria-label="Удалить вход ${escapeHTML(alias)}">${icon('close')}</button></div>`;
+    }).join('')}<div class="binding-editor"><input class="input" id="input-alias" placeholder="Имя входа, например changes" aria-label="Имя входа"><select class="select-input" id="input-source" aria-label="Источник входа"><option value="">Выберите результат</option>${sources.map(source => `<option value="${escapeHTML(JSON.stringify([source.nodeId,source.outputId]))}">${escapeHTML(source.nodeName)} / ${escapeHTML(source.name)}</option>`).join('')}</select><button class="button secondary" id="add-input" ${sources.length ? '' : 'disabled'}>${icon('plus')}Добавить вход</button></div><p class="field-help">Именованный вход снимает неоднозначность одинаковых имён. Он связан со стабильным ID результата.</p></div>
+    <div class="field"><div class="field-label">Выходы${isCMD ? ' · источник → имя' : ''}</div>${(node.outputs || []).map(output => `<div class="output-row">${isCMD ? `<select class="select-input" data-output-source="${escapeHTML(output.id)}" aria-label="Источник результата">${['stdout','stderr','exitCode'].map(source => `<option value="${source}" ${(output.source || output.name) === source ? 'selected' : ''}>${source}</option>`).join('')}</select>` : ''}<input class="input" data-output-name="${escapeHTML(output.id)}" aria-label="Имя результата" value="${escapeHTML(output.name)}" maxlength="80"><button class="icon-button" data-remove-output="${escapeHTML(output.id)}" aria-label="Удалить результат ${escapeHTML(output.name)}">${icon('close')}</button></div>`).join('')}<button class="button secondary" id="add-output">${icon('plus')}Добавить выход</button><p class="field-help">Переименование обновляет связанные ссылки. ${isCMD ? 'Источник сохраняется при переименовании. Пустые потоки тоже передаются; exitCode — строка в выходах и число в истории.' : 'Для нескольких выходов исполнитель возвращает JSON-объект с этими именами.'}</p></div>`;
 }
 function renderResult(node,result) {
-  return `${statusChip(result?.status || 'waiting')}<p class="field-help node-id">ID: ${escapeHTML(node.id)}<br>Исполнитель: ${escapeHTML(node.executor || '—')}</p>${result?.error ? `<p class="form-error">${escapeHTML(result.error)}</p>` : ''}<p class="field-help">Начало: ${formatTime(result?.startedAt)}<br>Завершение: ${formatTime(result?.finishedAt)}<br>Код завершения: ${result?.exitCode ?? '—'}</p>${resultSection('Фактические входы',result?.inputs || {},true)}${resultSection('Результаты',result?.outputs || {},true)}${resultSection('Промпт после подстановки',result?.prompt || '')}${resultSection('Исходный промпт',node.prompt)}${resultSection('Логи и выполненные проверки',result?.logs || '')}${resultSection('Diff блока',result?.diff || '')}${resultSection('Рабочее дерево и commit',{worktree:result?.worktree || '',commit:result?.commit || ''})}`;
+  const isCMD = node.type === 'cmd';
+  return `${statusChip(result?.status || 'waiting')}<p class="field-help node-id">ID: ${escapeHTML(node.id)}<br>${isCMD ? 'CMD · /bin/bash' : `AI · Исполнитель: ${escapeHTML(node.executor || '—')}`}</p>${result?.error ? `<p class="form-error">${escapeHTML(result.error)}</p>` : ''}<p class="field-help">Начало: ${formatTime(result?.startedAt)}<br>Завершение: ${formatTime(result?.finishedAt)}<br>Код завершения: ${result?.exitCode ?? '—'}</p>${result?.inputJson ? resultSection('Фактический JSON-вход',result.inputJson,true) : resultSection('Фактические входы',result?.inputs || {},true)}${resultSection('Исходный JSON',node.inputJson ?? (['ai','cmd'].includes(node.type) ? '{}' : 'Старый формат: только промпт'))}${resultSection('Результаты',result?.outputs || {},true)}${isCMD ? resultSection('Скрипт (буквальный код)',result?.command ?? node.command) + resultSection('stdout',result?.stdout || '') + resultSection('stderr',result?.stderr || '') + resultSection('Источники выходов',node.outputs || []) : resultSection('Промпт после подстановки',result?.prompt || '') + resultSection('Исходный промпт',node.prompt)}${resultSection('Логи и выполненные проверки',result?.logs || '')}${resultSection('Diff блока',result?.diff || '')}${resultSection('Рабочее дерево и commit',{worktree:result?.worktree || '',commit:result?.commit || ''})}`;
 }
 function closeInspector() { selected = null; $('#inspector').hidden = true; renderNodes(); }
 function deleteNode(id) {
@@ -372,12 +405,12 @@ function closeModal() { settingsSession = null; $('#modal-overlay').hidden = tru
 function modalHeader(title) { return `<div class="modal-head"><h2 id="modal-title">${escapeHTML(title)}</h2><button class="icon-button" data-close-modal aria-label="Закрыть">${icon('close')}</button></div>`; }
 function showPalette() {
   if (!editable()) return;
-  openModal(`${modalHeader('Добавить блок')}<p class="modal-intro">Один блок — одна задача. Свяжите этапы в рабочий процесс.</p>${Object.entries(types).map(([key,type]) => `<button class="palette-item" data-add-type="${key}" ${key === 'publish' && !publication.enabled ? 'disabled' : ''}><span class="node-icon" style="${nodeStyle(type)}">${icon(type.icon)}</span><div><strong>${escapeHTML(type.name)}</strong><small>${escapeHTML(key === 'publish' && !publication.enabled ? publication.detail : type.summary)}</small></div>${icon('plus')}</button>`).join('')}`);
+  openModal(`${modalHeader('Добавить блок')}<p class="modal-intro">Один блок — одна задача. Свяжите этапы в рабочий процесс.</p>${Object.entries(types).map(([key,type]) => `<button class="palette-item" data-add-type="${key}"><span class="node-icon" style="${nodeStyle(type)}">${icon(type.icon)}</span><div><strong>${escapeHTML(type.name)}</strong><small>${escapeHTML(type.summary)}</small></div>${icon('plus')}</button>`).join('')}`);
   $$('[data-add-type]').forEach(button => button.onclick = () => {
     const rect = $('#canvas').getBoundingClientRect();
     const node = makeNode(button.dataset.addType,Math.max(20,Math.round(((rect.width-330)/2-pan.x)/zoom/10)*10),Math.max(80,Math.round(((rect.height-240)/2-pan.y)/zoom/10)*10));
     let suffix = 2, base = node.outputs[0].name;
-    while (draft().nodes.some(item => item.outputs.some(output => output.name === node.outputs[0].name))) node.outputs[0].name = `${base}_${suffix++}`;
+    while (node.type === 'ai' && draft().nodes.some(item => item.outputs.some(output => output.name === node.outputs[0].name))) node.outputs[0].name = `${base}_${suffix++}`;
     draft().nodes.push(node); markDirty(); closeModal(); selectNode(node.id); renderHeader();
   });
 }
@@ -484,7 +517,7 @@ function renderRunDrawer() {
   if (!run) { drawer.hidden = true; return; }
   drawer.hidden = !drawerVisible;
   const previousScroll = $('.run-output',drawer)?.scrollTop || 0;
-  drawer.innerHTML = `<div class="run-header">${statusChip(run.status)}<strong>${escapeHTML(run.pipelineName)}</strong><span class="run-note">Снимок · ${formatTime(run.createdAt)}</span>${activeStatus(run.status) ? `<button class="button secondary" id="stop-run">${icon('stop')}Стоп</button>` : ''}<button class="icon-button" id="close-run" aria-label="Скрыть результаты запуска">${icon('close')}</button></div><div class="run-body"><div class="run-steps">${run.snapshot.nodes.map(node => `<button class="run-step ${statusClass(run.nodes?.[node.id]?.status)}" data-result-node="${escapeHTML(node.id)}">${icon(statusIcon(run.nodes?.[node.id]?.status))}<span>${escapeHTML(node.name)}<small>${escapeHTML(statusNames[run.nodes?.[node.id]?.status] || 'Ожидание')}</small></span></button>`).join('')}</div><div class="run-output">${run.error ? `<p class="form-error">${escapeHTML(run.error)}</p>` : ''}<p>Выберите блок, чтобы посмотреть фактические входы, результаты, промпт и логи.</p>${resultSection('Итоговый diff',run.diff || 'Изменений пока нет')}${run.snapshot.nodes.map(node => { const result = run.nodes?.[node.id]; return `<div class="log-line"><strong>${escapeHTML(node.name)} · ${escapeHTML(statusNames[result?.status] || 'Ожидание')}</strong>${result?.error ? `<p class="form-error">${escapeHTML(result.error)}</p>` : ''}<pre>${escapeHTML(result?.logs || '')}</pre></div>`; }).join('')}</div></div>`;
+  drawer.innerHTML = `<div class="run-header">${statusChip(run.status)}<strong>${escapeHTML(run.pipelineName)}</strong><span class="run-note">Снимок · ${formatTime(run.createdAt)}</span>${activeStatus(run.status) ? `<button class="button secondary" id="stop-run">${icon('stop')}Стоп</button>` : ''}<button class="icon-button" id="close-run" aria-label="Скрыть результаты запуска">${icon('close')}</button></div><div class="run-body"><div class="run-steps">${run.snapshot.nodes.map(node => `<button class="run-step ${statusClass(run.nodes?.[node.id]?.status)}" data-result-node="${escapeHTML(node.id)}">${icon(statusIcon(run.nodes?.[node.id]?.status))}<span>${escapeHTML(node.name)}<small>${escapeHTML(statusNames[run.nodes?.[node.id]?.status] || 'Ожидание')}</small></span></button>`).join('')}</div><div class="run-output">${run.error ? `<p class="form-error">${escapeHTML(run.error)}</p>` : ''}<p>Выберите блок, чтобы посмотреть фактический JSON-вход, результаты, промпт или скрипт и логи.</p>${resultSection('Итоговый diff',run.diff || 'Изменений пока нет')}${run.snapshot.nodes.map(node => { const result = run.nodes?.[node.id]; return `<div class="log-line"><strong>${escapeHTML(node.name)} · ${escapeHTML(statusNames[result?.status] || 'Ожидание')}</strong>${result?.error ? `<p class="form-error">${escapeHTML(result.error)}</p>` : ''}<pre>${escapeHTML(result?.logs || '')}</pre></div>`; }).join('')}</div></div>`;
   $('#close-run').onclick = () => { drawerVisible = false; drawer.hidden = true; };
   if ($('#stop-run')) $('#stop-run').onclick = action(() => cancelRun(run.id));
   $$('[data-result-node]').forEach(button => button.onclick = () => selectNode(button.dataset.resultNode));

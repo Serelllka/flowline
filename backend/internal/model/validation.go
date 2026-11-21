@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"regexp"
 	"strings"
@@ -33,6 +34,10 @@ func ValidateDraft(p Pipeline) error {
 
 	nodeIDs := map[string]bool{}
 	for _, node := range p.Nodes {
+		if node.ExecutionType() == "" {
+			return fmt.Errorf("unknown node type %q", node.Type)
+		}
+
 		if !ValidID(node.ID) || nodeIDs[node.ID] {
 			return errors.New("invalid or duplicate node ID")
 		}
@@ -43,6 +48,10 @@ func ValidateDraft(p Pipeline) error {
 
 		ids, names := map[string]bool{}, map[string]bool{}
 		for _, output := range node.Outputs {
+			if !node.ValidOutputSource(output) {
+				return fmt.Errorf("invalid output source %q for node type %q", output.Source, node.Type)
+			}
+
 			if !ValidID(output.ID) || ids[output.ID] {
 				return errors.New("invalid or duplicate output ID")
 			}

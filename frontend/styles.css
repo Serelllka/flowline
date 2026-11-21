@@ -105,3 +105,8 @@ button:focus-visible,a:focus-visible,summary:focus-visible,.node:focus-visible,.
 .empty-executors{font-size:14px;color:#829389;padding:20px 0}
 @media(max-width:850px){#executor-settings{font-size:11px;padding:0 9px}}
 @media(max-width:560px){.executor-fields{grid-template-columns:1fr}.executor-card{padding:12px}.executor-add{flex-wrap:wrap}.executor-add .field-label{width:100%}.executor-add .select-input{flex:1;min-width:0}.executor-card-heading{gap:6px}.executor-card-heading strong{font-size:13px}.executor-availability{font-size:10px}#executor-settings{font-size:0;padding:0 7px;height:29px;gap:0}#executor-settings svg{width:16px;height:16px}.settings-modal .modal-actions{flex-wrap:wrap}.settings-modal .modal-actions .button{font-size:12px}}
+
+.code-input,.stdin-example { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px; }
+.json-input { min-height:140px; resize:vertical; line-height:1.6; }
+.stdin-example { margin:8px 0 0; white-space:pre-wrap; color:var(--muted); }
+.output-row .select-input { width:110px; flex-shrink:0; }

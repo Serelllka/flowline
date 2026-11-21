@@ -208,3 +208,47 @@ func waitRun(t *testing.T, engine *run.Engine, id string) model.Run {
 	t.Fatal("run did not finish")
 	return model.Run{}
 }
+
+func TestHTTPCMDPipelineWithoutAIProfiles(t *testing.T) {
+	engine, store, repo, p := httpFixture(t)
+	if err := engine.InitializeExecutors(nil); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewServer(store, engine, nil, t.TempDir())
+	input := `{"message":"{{branch}}"}`
+	p.Nodes = []model.Node{{ID: "cmd", Type: "cmd", Name: "Command", Command: "cat; printf warning >&2", InputJSON: &input, Outputs: []model.Output{
+		{ID: "out", Name: "stdout"}, {ID: "err", Name: "stderr"}, {ID: "exit", Name: "exitCode"},
+	}}}
+
+	response := requestAPI(t, handler, "PUT", "/api/pipelines/"+p.ID, p)
+	if response.Code != 200 {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	response = requestAPI(t, handler, "GET", "/api/bootstrap", nil)
+	if response.Code != 200 || !strings.Contains(response.Body.String(), `"inputJson"`) || !strings.Contains(response.Body.String(), `"command":"cat; printf warning`) {
+		t.Fatal("new fields lost on reload:", response.Body.String())
+	}
+	response = requestAPI(t, handler, "POST", "/api/runs", map[string]any{"pipelineId": p.ID, "repositoryId": repo.ID, "branch": "main"})
+	if response.Code != 201 {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	var started model.Run
+	if err := json.Unmarshal(response.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	result := waitRun(t, engine, started.ID)
+	if result.Status != "success" || result.Nodes["cmd"].Outputs["stderr"] != "warning" || !json.Valid(result.Nodes["cmd"].InputJSON) {
+		t.Fatalf("CMD HTTP run failed: %+v", result.Nodes["cmd"])
+	}
+
+	invalid := "{invalid"
+	p.Nodes[0].InputJSON = &invalid
+	response = requestAPI(t, handler, "PUT", "/api/pipelines/"+p.ID, p)
+	if response.Code != 200 {
+		t.Fatal("incomplete JSON draft should save:", response.Body.String())
+	}
+	response = requestAPI(t, handler, "POST", "/api/runs", map[string]any{"pipelineId": p.ID, "repositoryId": repo.ID, "branch": "main"})
+	if response.Code < 400 || !strings.Contains(response.Body.String(), "inputJson") {
+		t.Fatal("invalid JSON executed:", response.Code, response.Body.String())
+	}
+}

@@ -341,3 +341,54 @@ func TestStoreDraftSafety(t *testing.T) {
 		t.Fatal("closed database should return error")
 	}
 }
+
+func TestStorePersistsExecutionFieldsWithoutMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "flowline.sqlite")
+	s := openTestStore(t, path)
+	p := testutil.Pipeline()
+	input := `{"message":"{{branch}}","quoted":"line\n\"value\""}`
+	p.Nodes[0].Type, p.Nodes[0].InputJSON = "ai", &input
+	p.Nodes[1].Type, p.Nodes[1].Command, p.Nodes[1].InputJSON = "cmd", "input=$(cat)\nprintf '%s' \"$input\"", &input
+	p.Nodes[1].Outputs = []model.Output{{ID: "review-id", Name: "renamed", Source: "stdout"}}
+	run := testRun()
+	run.Snapshot = p
+	run.Status = "success"
+	run.Nodes["review"].InputJSON = []byte(`{"context":{},"predecessors":{},"inputs":{},"data":{"message":"main"}}`)
+	run.Nodes["review"].Command = p.Nodes[1].Command
+	run.Nodes["review"].Stdout, run.Nodes["review"].Stderr = "result", "warning"
+	run.Nodes["review"].Outputs = map[string]string{"renamed": "result", "empty": ""}
+	code := 0
+	run.Nodes["review"].ExitCode = &code
+	if err := s.SavePipeline(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s = openTestStore(t, path)
+	stored, err := s.Pipeline(p.ID)
+	if err != nil || !reflect.DeepEqual(stored, p) {
+		t.Fatalf("new pipeline fields lost: %+v %v", stored, err)
+	}
+	storedRun, err := s.Run(run.ID)
+	if err != nil || !reflect.DeepEqual(storedRun, run) {
+		t.Fatalf("new run fields lost: %+v %v", storedRun, err)
+	}
+	storedRun.Snapshot.Nodes[1].Command = "changed"
+	if err := s.SaveRun(storedRun); err == nil {
+		t.Fatal("CMD snapshot is mutable")
+	}
+	storedRun, err = s.Run(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := "{}"
+	storedRun.Snapshot.Nodes[0].InputJSON = &changed
+	if err := s.SaveRun(storedRun); err == nil {
+		t.Fatal("JSON snapshot is mutable")
+	}
+}

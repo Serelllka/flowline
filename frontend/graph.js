@@ -26,7 +26,33 @@
     }
     return [...new Set([...tokens, ...Object.keys(node.inputs || {})])];
   }
-  const graph = {builtins, hasCycle, availableSources, availableTokens};
+  function executionType(node) {
+    if (node.type === 'cmd') return 'cmd';
+    if (['ai', '', undefined, 'develop', 'review', 'test', 'publish', 'prompt'].includes(node.type)) return 'ai';
+    return '';
+  }
+  function jsonInputError(text) {
+    try {
+      const value = JSON.parse(text);
+      return value && typeof value === 'object' && !Array.isArray(value) ? '' : 'Требуется JSON-объект, например {}.';
+    } catch (error) { return `Некорректный JSON: ${error.message}`; }
+  }
+  function defaultOutputs(type, newID) {
+    return type === 'cmd'
+      ? ['stdout', 'stderr', 'exitCode'].map(source => ({id:newID(), name:source, source}))
+      : [{id:newID(), name:'result'}];
+  }
+  function jsonReference(text, position, token) {
+    let inString = false, escaped = false;
+    for (const char of text.slice(0,position)) {
+      if (escaped) { escaped = false; continue; }
+      if (char === '\\' && inString) escaped = true;
+      else if (char === '"') inString = !inString;
+    }
+    const reference = `{{${token}}}`;
+    return inString ? reference : JSON.stringify(reference);
+  }
+  const graph = {builtins, hasCycle, availableSources, availableTokens, executionType, jsonInputError, defaultOutputs, jsonReference};
   if (typeof module !== 'undefined' && module.exports) module.exports = graph;
   else root.FlowlineGraph = graph;
 })(globalThis);

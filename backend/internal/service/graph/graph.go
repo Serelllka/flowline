@@ -34,10 +34,16 @@ func ValidateGraph(p model.Pipeline) []string {
 		if strings.TrimSpace(n.Name) == "" {
 			problems = append(problems, fmt.Sprintf("У блока %q отсутствует название", n.ID))
 		}
-		if strings.TrimSpace(n.Executor) == "" {
+		if n.ExecutionType() == "" {
+			problems = append(problems, fmt.Sprintf("Блок %q: неизвестный тип %q", n.ID, n.Type))
+		}
+		if n.ExecutionType() == "cmd" && strings.TrimSpace(n.Command) == "" {
+			problems = append(problems, fmt.Sprintf("У блока %q пустой скрипт", n.ID))
+		}
+		if n.ExecutionType() == "ai" && strings.TrimSpace(n.Executor) == "" {
 			problems = append(problems, fmt.Sprintf("У блока %q не выбран исполнитель", n.ID))
 		}
-		if strings.TrimSpace(n.Prompt) == "" {
+		if n.ExecutionType() == "ai" && strings.TrimSpace(n.Prompt) == "" {
 			problems = append(problems, fmt.Sprintf("У блока %q пустой промпт", n.ID))
 		}
 		if math.IsNaN(n.X) || math.IsInf(n.X, 0) || math.IsNaN(n.Y) || math.IsInf(n.Y, 0) {
@@ -49,6 +55,10 @@ func ValidateGraph(p model.Pipeline) []string {
 
 		ids, names := map[string]bool{}, map[string]bool{}
 		for _, output := range n.Outputs {
+			if !n.ValidOutputSource(output) {
+				problems = append(problems, fmt.Sprintf("Блок %q: недопустимый источник результата %q для типа %q", n.ID, output.Name, n.Type))
+			}
+
 			if !model.ValidID(output.ID) || ids[output.ID] {
 				problems = append(problems, fmt.Sprintf("У блока %q некорректный или повторяющийся ID результата %q", n.ID, output.ID))
 			}
@@ -105,7 +115,7 @@ func ValidateGraph(p model.Pipeline) []string {
 	for _, n := range p.Nodes {
 		refs, ambiguous, refErrors := inputReferences(p, n)
 		problems = append(problems, refErrors...)
-		tokens, err := promptTokens(n.Prompt)
+		tokens, err := nodeTokens(n)
 		if err != nil {
 			problems = append(problems, fmt.Sprintf("Блок %q: %v", n.ID, err))
 			continue
@@ -258,8 +268,10 @@ func ResolveInputs(p model.Pipeline, n model.Node, gitContext model.GitContext, 
 		inputs[token] = value
 	}
 
-	if _, err := RenderPrompt(n.Prompt, inputs); err != nil {
-		return nil, err
+	if n.ExecutionType() == "ai" {
+		if _, err := RenderPrompt(n.Prompt, inputs); err != nil {
+			return nil, err
+		}
 	}
 
 	return inputs, nil
@@ -309,6 +321,9 @@ func RenameOutput(p *model.Pipeline, nodeID, outputID, newName string) error {
 		for j, output := range n.Outputs {
 			if output.ID == outputID {
 				oldName, found = output.Name, true
+				if n.ExecutionType() == "cmd" {
+					candidate.Nodes[i].Outputs[j].Source = output.StreamSource()
+				}
 				candidate.Nodes[i].Outputs[j].Name = newName
 			}
 		}
@@ -325,7 +340,7 @@ func RenameOutput(p *model.Pipeline, nodeID, outputID, newName string) error {
 		before, ambiguousBefore, _ := inputReferences(*p, n)
 		after, ambiguousAfter, _ := inputReferences(candidate, candidate.Nodes[i])
 		var renameErr error
-		candidate.Nodes[i].Prompt = tokenPattern.ReplaceAllStringFunc(n.Prompt, func(raw string) string {
+		rewrite := func(raw string) string {
 			token := strings.TrimSpace(raw[2 : len(raw)-2])
 			if ambiguousBefore[token] && token == oldName {
 				renameErr = fmt.Errorf("блок %q: сначала разрешите неоднозначную ссылку {{%s}}", n.ID, token)
@@ -351,7 +366,35 @@ func RenameOutput(p *model.Pipeline, nodeID, outputID, newName string) error {
 			}
 
 			return strings.Replace(raw, token, replacement, 1)
-		})
+		}
+		rewriteText := func(value string) (string, error) {
+			updated := tokenPattern.ReplaceAllStringFunc(value, rewrite)
+
+			return updated, renameErr
+		}
+		if n.ExecutionType() == "ai" {
+			candidate.Nodes[i].Prompt, _ = rewriteText(n.Prompt)
+		}
+		if n.InputJSON != nil {
+			changed := false
+			data, err := transformInputJSON(n.InputJSON, func(value string) (string, error) {
+				updated, err := rewriteText(value)
+				changed = changed || updated != value
+
+				return updated, err
+			})
+			if err != nil {
+				return fmt.Errorf("блок %q: %w", n.ID, err)
+			}
+			if changed {
+				encoded, err := json.MarshalIndent(data, "", "  ")
+				if err != nil {
+					return err
+				}
+				text := string(encoded)
+				candidate.Nodes[i].InputJSON = &text
+			}
+		}
 		if renameErr != nil {
 			return renameErr
 		}
