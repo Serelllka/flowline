@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f8faf9">
+  <title>Flowline — рабочее пространство</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#" aria-label="Flowline — редактор"><span class="brand-mark"><i></i><i></i><i></i></span>flowline</a>
+    <nav class="main-nav" aria-label="Основная навигация">
+      <button class="nav-item active" data-view="editor"><span data-icon="workflow"></span>Пайплайны<span class="nav-count" id="pipeline-count">0</span></button>
+      <button class="nav-item" data-view="history"><span data-icon="history"></span>История запусков</button>
+    </nav>
+    <div class="nav-label pipelines-label">МОИ ПАЙПЛАЙНЫ<button class="icon-button" id="new-pipeline" aria-label="Создать пайплайн" title="Создать пайплайн"><span data-icon="plus"></span></button></div>
+    <div id="pipeline-list"></div>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div class="breadcrumb"><span data-icon="layers"></span><span>Пайплайны</span><span class="slash">/</span><strong id="breadcrumb-name">Новый пайплайн</strong></div>
+      <button class="button secondary" id="executor-settings" aria-label="Настроить исполнителей" title="Исполнители"><span data-icon="terminal"></span>Исполнители</button>
+    </header>
+    <section class="contextbar" aria-label="Контекст запуска">
+      <div class="context-field repository-field"><span data-icon="folder"></span><div><label id="repository-label" for="repo-select">Репозиторий</label><select id="repo-select"></select><button type="button" class="repository-empty" id="empty-repository" hidden>Добавьте репозиторий</button></div></div>
+      <span class="context-divider"></span>
+      <div class="context-field"><span data-icon="branch"></span><div><label for="branch-select">Рабочая ветка</label><select id="branch-select"></select></div></div>
+      <span class="context-divider"></span>
+      <div class="context-field pr-field"><span data-icon="pull"></span><div><label for="pr-select">Pull request</label><select id="pr-select"></select></div></div>
+      <button class="icon-button" id="refresh-context" aria-label="Обновить ветки и PR" title="Обновить ветки и PR"><span data-icon="history"></span></button><button class="button secondary" id="add-repository"><span data-icon="plus"></span>Репозиторий</button>
+    </section>
+    <div id="context-message" class="context-message" role="status" hidden></div>
+    <div id="app-error" class="app-error" role="alert" hidden></div>
+    <div class="snapshot-banner" id="snapshot-banner" hidden><span id="snapshot-label"></span><button class="button secondary" id="return-editor">Вернуться в редактор</button></div>
+    <div class="page-heading"><div><div class="title-row"><h1 id="pipeline-title">Новый пайплайн</h1><button id="rename-pipeline" class="icon-button" aria-label="Переименовать пайплайн" title="Переименовать"><span data-icon="edit"></span></button></div><p id="pipeline-description" hidden></p></div><div class="heading-actions"><span id="save-state" class="save-state">Не сохранён</span><button id="save-button" class="button secondary"><span data-icon="save"></span>Сохранить</button><button id="run-button" class="button primary"><span data-icon="play"></span>Запустить</button></div></div>
+    <div class="viewbar"><div class="tabs" role="tablist" aria-label="Раздел пайплайна"><button class="tab active" id="editor-tab" role="tab" aria-selected="true" data-view="editor"><span data-icon="workflow"></span>Редактор</button><button class="tab" id="history-tab" role="tab" aria-selected="false" data-view="history"><span data-icon="history"></span>Запуски<span id="run-count" class="tab-count">0</span></button></div><div class="graph-stats"><span id="node-count">0 блоков</span><span class="tiny-divider"></span><span id="edge-count">0 связей</span></div></div>
+    <section class="editor" id="editor-view" aria-label="Редактор графа">
+      <div class="canvas-toolbar"><button class="button add-block" id="add-block"><span data-icon="plus"></span>Добавить блок</button><span class="canvas-hint" id="canvas-hint" role="status" hidden></span></div>
+      <div class="canvas" id="canvas" tabindex="0" aria-label="Холст пайплайна. Перетаскивайте блоки за заголовок.">
+        <div class="world" id="world"><svg id="edges" class="edges" aria-label="Связи блоков"></svg><div id="nodes"></div></div>
+        <div class="canvas-empty" id="canvas-empty" hidden><h2>Пайплайн пуст</h2><button class="button secondary" id="empty-add">Добавить блок</button></div>
+      </div>
+      <div class="canvas-bottom"><div class="zoom-tools"><button class="icon-button" id="zoom-out" aria-label="Уменьшить масштаб"><span data-icon="minus"></span></button><button id="zoom-reset" class="zoom-label" title="Масштаб 100%">100%</button><button class="icon-button" id="zoom-in" aria-label="Увеличить масштаб"><span data-icon="plus"></span></button><span class="small-divider"></span><button class="icon-button" id="fit-canvas" aria-label="Показать весь граф" title="Показать весь граф"><span data-icon="maximize"></span></button></div><div class="minimap" id="minimap" aria-hidden="true"></div></div>
+      <aside class="inspector" id="inspector" aria-label="Настройки блока" hidden></aside>
+      <section class="run-drawer" id="run-drawer" aria-label="Результат запуска" hidden></section>
+    </section>
+    <section class="history-view" id="history-view" hidden></section>
+  </main>
+  <div class="overlay" id="modal-overlay" hidden><section class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"></section></div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <script src="icons.js"></script>
+  <script src="graph.js"></script>
+  <script src="executor-config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

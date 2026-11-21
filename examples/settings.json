@@ -1,0 +1,26 @@
+{
+  "listen": "127.0.0.1:4173",
+  "dataDir": "~/.flowline",
+  "executors": [
+    {
+      "id": "codex",
+      "name": "Codex CLI",
+      "kind": "codex",
+      "command": "codex"
+    },
+    {
+      "id": "claude",
+      "name": "Claude Code",
+      "kind": "claude",
+      "command": "claude"
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek API",
+      "kind": "openai-compatible",
+      "model": "deepseek-flash",
+      "baseUrl": "https://api.deepseek.com",
+      "apiKeyEnv": "DEEPSEEK_API_KEY"
+    }
+  ]
+}
