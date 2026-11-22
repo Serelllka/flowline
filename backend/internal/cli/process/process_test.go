@@ -137,3 +137,17 @@ func TestRunProcessEscalatesIgnoredTermination(t *testing.T) {
 	}
 	awaitDead(t, pid)
 }
+
+func TestRunProcessStreamsRetainsSeparateOutputOnFailure(t *testing.T) {
+	stdout, stderr, code, err := RunProcessStreams(context.Background(), []string{"/bin/bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", "cat; printf 'error\\n' >&2; exit 9"}, t.TempDir(), "input\n", nil)
+	if err == nil || code != 9 || stdout != "input\n" || stderr != "error\n" {
+		t.Fatalf("streams lost: stdout=%q stderr=%q code=%d err=%v", stdout, stderr, code, err)
+	}
+}
+
+func TestRunProcessStreamsBoundsStderr(t *testing.T) {
+	stdout, stderr, _, err := RunProcessStreams(context.Background(), []string{"/bin/sh", "-c", "while :; do printf 'abcdefghijklmnopqrstuvwxyz0123456789\\n' >&2; done"}, t.TempDir(), "", nil)
+	if !errors.Is(err, ErrOutputLimit) || stdout != "" || len(stderr) == 0 || len(stderr) > processOutputLimit {
+		t.Fatalf("stderr limit: stdout=%q stderr bytes=%d err=%v", stdout, len(stderr), err)
+	}
+}

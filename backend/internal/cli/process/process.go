@@ -111,14 +111,22 @@ func (w *processStream) finish() (string, bool) {
 	return w.raw.String(), w.overflow
 }
 
-// RunProcess owns a POSIX process group, including inherited descendants.
-// It never invokes a shell implicitly. Callbacks receive redacted, complete lines.
+// RunProcess preserves the stdout-only API used by existing executors.
 func RunProcess(ctx context.Context, argv []string, cwd, input string, onOutput func(string)) (string, int, error) {
+	stdout, _, code, err := RunProcessStreams(ctx, argv, cwd, input, onOutput)
+
+	return stdout, code, err
+}
+
+// RunProcessStreams owns a POSIX process group, including inherited descendants.
+// It never invokes a shell implicitly. Callbacks receive redacted, complete lines.
+// Returned streams are bounded raw data; callers must redact before persistence.
+func RunProcessStreams(ctx context.Context, argv []string, cwd, input string, onOutput func(string)) (string, string, int, error) {
 	if len(argv) == 0 || strings.TrimSpace(argv[0]) == "" {
-		return "", -1, errors.New("executor command is empty")
+		return "", "", -1, errors.New("executor command is empty")
 	}
 	if err := ctx.Err(); err != nil {
-		return "", -1, err
+		return "", "", -1, err
 	}
 
 	owned, cancel := context.WithCancel(ctx)
@@ -137,15 +145,15 @@ func RunProcess(ctx context.Context, argv []string, cwd, input string, onOutput 
 	// commands remain startup errors, rather than a successful helper launch.
 	target := exec.Command(argv[0], argv[1:]...)
 	if target.Err != nil {
-		return "", -1, fmt.Errorf("start process: %w", target.Err)
+		return "", "", -1, fmt.Errorf("start process: %w", target.Err)
 	}
 	executable, err := os.Executable()
 	if err != nil {
-		return "", -1, fmt.Errorf("locate process guard: %w", err)
+		return "", "", -1, fmt.Errorf("locate process guard: %w", err)
 	}
 	livenessReader, livenessWriter, err := os.Pipe()
 	if err != nil {
-		return "", -1, fmt.Errorf("create process liveness pipe: %w", err)
+		return "", "", -1, fmt.Errorf("create process liveness pipe: %w", err)
 	}
 	defer livenessReader.Close()
 	defer livenessWriter.Close()
@@ -160,7 +168,7 @@ func RunProcess(ctx context.Context, argv []string, cwd, input string, onOutput 
 	// Parent exit must not hang on an orphan retaining a pipe.
 	cmd.WaitDelay = 300 * time.Millisecond
 	if err := cmd.Start(); err != nil {
-		return "", -1, fmt.Errorf("start process: %w", err)
+		return "", "", -1, fmt.Errorf("start process: %w", err)
 	}
 	// Only the child keeps the read end. Only this parent holds the write end;
 	// kernel closure on a crash therefore wakes the independent guardian.
@@ -200,17 +208,17 @@ func RunProcess(ctx context.Context, argv []string, cwd, input string, onOutput 
 	terminate()
 	<-watcherDone
 	out, outOverflow := stdout.finish()
-	_, errOverflow := stderr.finish()
+	errOut, errOverflow := stderr.finish()
 	code := cmd.ProcessState.ExitCode()
 	if outOverflow || errOverflow {
-		return out, code, ErrOutputLimit
+		return out, errOut, code, ErrOutputLimit
 	}
 	if ctx.Err() != nil {
-		return out, code, ctx.Err()
+		return out, errOut, code, ctx.Err()
 	}
 	if err != nil {
-		return out, code, fmt.Errorf("process failed (exit %d): %w", code, err)
+		return out, errOut, code, fmt.Errorf("process failed (exit %d): %w", code, err)
 	}
 
-	return out, code, nil
+	return out, errOut, code, nil
 }

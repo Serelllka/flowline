@@ -1,6 +1,6 @@
 # Flowline implementation contracts
 
-Module: flowline, Go 1.27. Shared domain contracts: backend/internal/model. Implementations are split into config/app, api/http, service/run, service/graph, repository/{sqlite,git,settings,executorconfig}, client/{github,chatcompletion}, cli/{codex,claude,process}. The service entry point is cmd/service; executorconfig only reads the legacy format.
+Module: flowline, Go 1.27. Shared domain contracts: backend/internal/model. Implementations are split into config/app, api/http, service/run, service/graph, repository/{sqlite,git,settings,executorconfig}, client/{github,chatcompletion}, cli/{codex,claude,command,process}. The service entry point is cmd/service; executorconfig only reads the legacy format.
 Frontend: buildless HTML/CSS/JS in frontend, served same-origin by backend.
 
 JSON uses camelCase. IDs UUID/random hex, output names identifiers.
@@ -10,13 +10,13 @@ Types (exported Go field names follow normal acronyms):
 - Branch: Name, SHA (string).
 - PullRequest: Number(int), Title, URL, Head, Base, HeadSHA, BaseSHA, Repository (string).
 - GitContext: Repository(Repository), Branch, SHA (string), PR(*PullRequest).
-- Output: ID, Name (string).
+- Output: ID, Name, Source (string); optional source is stdout/stderr/exitCode for CMD only, inferred from the standard name if omitted.
 - Source: NodeID, OutputID (string).
-- Node: ID, Type, Name, Executor, Prompt (string); X,Y(float64); Outputs([]Output); Inputs(map[string]Source).
+- Node: ID, Type, Name, Executor, Prompt, Command (string); InputJSON(*string, JSON field `inputJson`, optional text); X,Y(float64); Outputs([]Output); Inputs(map[string]Source).
 - Edge: From, To(string).
 - Viewport: X,Y,Zoom(float64).
 - Pipeline: ID, Name, Description(string), Nodes([]Node), Edges([]Edge), Viewport(Viewport), UpdatedAt(string).
-- NodeRun: NodeID, Status, StartedAt, FinishedAt, Error, Prompt, Logs, Worktree, Commit, Diff(string); Inputs(map[string]string); Outputs(map[string]string); ExitCode(*int).
+- NodeRun: NodeID, Status, StartedAt, FinishedAt, Error, Prompt, Command, Stdout, Stderr, Logs, Worktree, Commit, Diff(string); InputJSON(json.RawMessage, resolved envelope); Inputs(map[string]string); Outputs(map[string]string); ExitCode(*int).
 - Run: ID, PipelineID, PipelineName, Status, CreatedAt, FinishedAt, Error, Diff(string); Snapshot(Pipeline); Context(GitContext); Nodes(map[string]*NodeRun).
 States: waiting,running,success,error,cancelled,skipped,interrupted. Run terminal success/error/cancelled/interrupted.
 - ExecutorInfo (API only): id,name,available,detail.
@@ -25,8 +25,10 @@ Graph API:
 ValidateGraph(Pipeline) []string. Empty nodes invalid for run; SavePipeline may store incomplete draft.
 ResolveInputs(Pipeline, Node, GitContext, map[string]*NodeRun) (map[string]string,error).
 RenderPrompt(prompt string, inputs map[string]string) (string,error).
-RenameOutput(*Pipeline,nodeID,outputID,newName string) error. Bindings use stable output IDs; rewrite shorthand/qualified prompt tokens only when reference resolves to renamed output.
-Builtin tokens: context,repository,branch,commit,pull_request. Direct predecessors only. Qualified token: nodeID.outputName. Implicit shorthand is ambiguous if two direct predecessors expose same name, unless explicit Node.Inputs alias resolves it. Validate missing sources, outputs, direct edges, duplicate IDs/edges, cycles, invalid names, reserved aliases, malformed tokens. ValidateGraph also checks each node Executor is nonempty but actual availability belongs to engine.
+ResolveInputJSON(Pipeline, Node, GitContext, map[string]*NodeRun, map[string]string) (json.RawMessage,error).
+RenameOutput(*Pipeline,nodeID,outputID,newName string) error. Bindings use stable output IDs; rewrite shorthand/qualified AI prompt and JSON string-value tokens only when reference resolves to renamed output. Preserve aliases, JSON keys, CMD source identity and literal scripts; qualify collisions atomically.
+Only direct consumers need reference rewrites. Incomplete JSON in unrelated draft nodes does not block a rename; invalid JSON in an affected consumer still rejects it atomically.
+Builtin tokens: context,repository,branch,commit,pull_request. Direct predecessors only. Qualified token: nodeID.outputName. Implicit shorthand is ambiguous if two direct predecessors expose same name, unless explicit Node.Inputs alias resolves it. Validate missing sources, outputs, direct edges, duplicate IDs/edges, cycles, invalid names, reserved aliases, malformed tokens. ValidateGraph requires a nonempty Executor and Prompt only for AI; actual profile availability belongs to engine. CMD requires a nonempty Command and valid stream sources. Unknown types fail in draft and execution validation.
 ResolveInputs provides builtins, unambiguous predecessor outputs, qualified output names, explicit aliases. Outputs map keyed by output NAME; bindings by output ID mapped via snapshot.
 
 SQLite repository API:
@@ -69,3 +71,43 @@ settings. Startup reads without rewriting. If the implicit default file is absen
 legacy `<data>/executors.json` is read; malformed settings never fall back silently.
 
 Publication means only local preparation (description, checks summary, release notes and diff). Flowline has no push, remote PR mutation, merge or release endpoint.
+
+## Execution types and JSON input
+
+`ai` and `cmd` are execution types. `develop`, `review`, `test`, `publish`, `prompt`
+and the empty type remain AI-compatible. New templates create AI nodes with stage
+names. No storage migration or historical payload rewrite is required.
+
+New nodes default inputJson to the text `{}`. The backend also uses `{}` when the
+field is absent on ai/cmd. Explicit empty/invalid/non-object JSON is a run validation
+error; incomplete JSON drafts can still save. On legacy nodes, absent inputJson
+preserves exact prompt-only execution; setting the field opts into the new envelope.
+
+Envelope fields: `context` (GitContext), `predecessors` (node ID -> output name ->
+string), `inputs` (existing resolved builtin/shorthand/qualified/alias bindings),
+`data` (resolved user JSON object). References are substituted once in JSON string
+values recursively, preserving JSON escaping and numeric precision. Keys remain
+literal. Reference validation uses existing direct-edge and stable-ID rules.
+
+AI appends the serialized envelope to the rendered instructions and keeps the
+existing named-output protocol. CMD runs literal Command using `/bin/bash
+--noprofile --norc -e -o pipefail -c`, receives the envelope plus a newline on stdin,
+and needs no profile. Commands use the same isolated worktree, process guardian,
+30-minute timeout, cancellation, dependency failure and Git snapshot paths.
+
+CMD creation in the palette supplies three stable output definitions: stdout,
+stderr, exitCode. Each can map to any of those sources via Source; empty stdout and
+stderr are valid results. Renaming an inferred standard source makes Source explicit.
+AI rejects Source fields. CMD output values are strings, including exitCode;
+NodeRun.ExitCode remains numeric. On error, both streams, outputs, code, logs,
+resolved input and script remain available. RunProcessStreams returns bounded raw
+stdout/stderr separately; RunProcess retains the existing stdout/code/error API.
+Callbacks redact complete lines, and execution redacts streams and JSON structurally
+before persistence. Stored source configuration remains the immutable user snapshot.
+
+HTTP run responses (including bootstrap, list, start and cancel) also expose
+`nodes[id].inputJsonText` when resolved input exists. This is the exact stored,
+already-redacted JSON as a string so history can display numbers beyond JavaScript
+precision without rounding or converting them to null. The existing `inputJson`
+object stays unchanged for API consumers; `inputJsonText` is derived at the HTTP
+boundary and is not duplicated in storage.

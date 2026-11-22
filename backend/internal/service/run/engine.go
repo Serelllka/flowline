@@ -80,6 +80,10 @@ func (e *Engine) Start(ctx context.Context, pipelineID, repositoryID, branch str
 	e.mu.Unlock()
 
 	for _, node := range p.Nodes {
+		if node.ExecutionType() == "cmd" {
+			continue
+		}
+
 		executor := registry[node.Executor]
 		if executor == nil || !executor.Info().Available {
 			return model.Run{}, fmt.Errorf("%s: исполнитель %q недоступен", node.Name, node.Executor)

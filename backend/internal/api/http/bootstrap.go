@@ -23,5 +23,5 @@ func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, 200, map[string]any{"repositories": repositories, "pipelines": pipelines, "runs": runs, "executors": s.engine.ExecutorInfos(), "publication": map[string]any{"enabled": true, "detail": "Локальный пакет: diff, описание PR, проверки и релизные заметки. Без push, изменения PR, merge и релиза."}})
+	writeJSON(w, 200, map[string]any{"repositories": repositories, "pipelines": pipelines, "runs": runResponses(runs), "executors": s.engine.ExecutorInfos(), "publication": map[string]any{"enabled": true, "detail": "Локальный пакет: diff, описание PR, проверки и релизные заметки. Без push, изменения PR, merge и релиза."}})
 }

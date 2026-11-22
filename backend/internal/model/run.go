@@ -1,5 +1,7 @@
 package model
 
+import "encoding/json"
+
 type NodeRun struct {
 	NodeID     string            `json:"nodeId"`
 	Status     string            `json:"status"`
@@ -7,6 +9,10 @@ type NodeRun struct {
 	FinishedAt string            `json:"finishedAt"`
 	Error      string            `json:"error"`
 	Prompt     string            `json:"prompt"`
+	Command    string            `json:"command,omitempty"`
+	InputJSON  json.RawMessage   `json:"inputJson,omitempty"`
+	Stdout     string            `json:"stdout,omitempty"`
+	Stderr     string            `json:"stderr,omitempty"`
 	Logs       string            `json:"logs"`
 	Worktree   string            `json:"worktree"`
 	Commit     string            `json:"commit"`

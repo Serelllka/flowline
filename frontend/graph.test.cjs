@@ -23,3 +23,36 @@ test('only direct predecessors expose outputs and context stays reserved', () =>
   assert(tokens.includes('b.context'));
   assert.equal(tokens.filter(t=>t==='context').length,1);
 });
+
+test('execution types preserve legacy AI nodes and reject unknown types', () => {
+  for (const type of ['ai', '', undefined, 'develop', 'review', 'test', 'publish', 'prompt']) {
+    assert.equal(graph.executionType({type}), 'ai');
+  }
+  assert.equal(graph.executionType({type:'cmd'}), 'cmd');
+  assert.equal(graph.executionType({type:'typo'}), '');
+});
+test('CMD defaults include stable stream sources independently of renamed labels', () => {
+  let id = 0;
+  const outputs = graph.defaultOutputs('cmd', () => `output_${++id}`);
+  assert.deepEqual(outputs.map(output => output.name), ['stdout','stderr','exitCode']);
+  outputs[0].name = 'report';
+  assert.equal(outputs[0].source, 'stdout');
+  assert.equal(new Set(outputs.map(output => output.id)).size, 3);
+  assert.deepEqual(graph.defaultOutputs('ai', () => 'ai_out'), [{id:'ai_out',name:'result'}]);
+});
+test('JSON input accepts objects and reports invalid text and non-objects', () => {
+  for (const text of ['{}', '{"value":"{{branch}}","nested":["\\\"\\n$(touch nope)"]}']) {
+    assert.equal(graph.jsonInputError(text), '');
+  }
+  for (const text of ['', '[]', 'null', '"text"', '42', '{', '{} {}', '{"x":}']) {
+    assert.notEqual(graph.jsonInputError(text), '', text);
+  }
+});
+test('JSON reference insertion quotes values but preserves existing string quotes', () => {
+  const outside = '{"value":}';
+  const position = outside.indexOf('}');
+  const result = outside.slice(0,position) + graph.jsonReference(outside,position,'node.stdout') + outside.slice(position);
+  assert.equal(JSON.parse(result).value, '{{node.stdout}}');
+  const inside = '{"value":"prefix \\"quoted\\" "}';
+  assert.equal(graph.jsonReference(inside, inside.length-2, 'branch'), '{{branch}}');
+});
